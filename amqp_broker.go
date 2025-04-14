@@ -117,7 +117,7 @@ func (b *AMQPCeleryBroker) SendCeleryMessage(ctx context.Context, msg *CeleryMes
 	if err != nil {
 		return fmt.Errorf("publish error: %w", err)
 	}
-	ok, err = confirms[0].WaitContext(context.Background())
+	ok, err = confirms[0].WaitContext(ctx)
 	if err != nil {
 		return fmt.Errorf("confirm wait error: %w", err)
 	}

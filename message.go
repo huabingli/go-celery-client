@@ -35,6 +35,26 @@ func (cp *CeleryProperties) Merge(other *CeleryProperties) {
 	}
 }
 
+var propertiesPool = sync.Pool{
+	New: func() interface{} {
+		return &CeleryProperties{}
+	},
+}
+
+func getProperties() *CeleryProperties {
+	p := propertiesPool.Get().(*CeleryProperties)
+	p.CorrelationId = common.GenerateRequestID()
+	p.ReplyTo = common.GenerateRequestID()
+	p.ContentEncoding = "utf-8"
+	p.ContentType = "application/json"
+	return p
+}
+
+func releaseProperties(p *CeleryProperties) {
+	*p = CeleryProperties{}
+	propertiesPool.Put(p)
+}
+
 type CeleryHeaders struct {
 	Lang                string `json:"lang,omitempty"`
 	Task                string `json:"task,omitempty"`
@@ -72,6 +92,7 @@ func (ch *CeleryHeaders) Merge(other *CeleryHeaders) {
 		ch.RootId = other.RootId
 	}
 	if other.ParentId != "" {
+		ch.ParentId = other.ParentId
 	}
 	if other.Group != "" {
 		ch.Group = other.Group
@@ -106,9 +127,84 @@ func (ch *CeleryHeaders) Merge(other *CeleryHeaders) {
 	if other.ReplacedTaskNesting != "" {
 		ch.ReplacedTaskNesting = other.ReplacedTaskNesting
 	}
-	if other.ParentId != "" {
-		ch.ParentId = other.ParentId
+}
+
+var cachedHostname = os.Getenv("HOSTNAME")
+var origin = fmt.Sprintf("%d@%s", os.Getgid(), cachedHostname)
+
+var headersPool = sync.Pool{
+	New: func() interface{} {
+		return &CeleryHeaders{}
+	},
+}
+
+func getHeaders() *CeleryHeaders {
+	h := headersPool.Get().(*CeleryHeaders)
+	h.Lang = "py"
+	h.ID = common.GenerateRequestID()
+	h.Origin = origin
+	return h
+}
+
+func releaseHeaders(h *CeleryHeaders) {
+	*h = CeleryHeaders{}
+	headersPool.Put(h)
+}
+
+type CeleryMessage struct {
+	Body            []byte            `json:"body,omitempty"`
+	Headers         *CeleryHeaders    `json:"headers,omitempty"`
+	Properties      *CeleryProperties `json:"properties,omitempty"`
+	QueueName       string            `json:"queue_name,omitempty"`
+	ContentType     string            `json:"content_type,omitempty"`
+	ContentEncoding string            `json:"content_encoding,omitempty"`
+}
+
+func (cm *CeleryMessage) reset() {
+	cm.ContentEncoding = "utf-8"
+	cm.ContentType = "application/json"
+	cm.Body = nil
+
+	// 先释放旧的
+	if cm.Headers != nil {
+		releaseHeaders(cm.Headers)
 	}
+
+	if cm.Properties != nil {
+		releaseProperties(cm.Properties)
+	}
+
+	cm.Headers = getHeaders()
+	cm.Properties = getProperties()
+
+}
+
+var celeryMessagePool = sync.Pool{
+	New: func() interface{} {
+		msg := &CeleryMessage{}
+		msg.reset()
+		return msg
+	},
+}
+
+func getCeleryMessage(encodedTaskMessage []byte) *CeleryMessage {
+	msg := celeryMessagePool.Get().(*CeleryMessage)
+	msg.Body = encodedTaskMessage
+	msg.Headers.Argsrepr = string(encodedTaskMessage)
+	return msg
+}
+
+func releaseCeleryMessage(v *CeleryMessage) {
+	v.reset()
+	celeryMessagePool.Put(v)
+}
+
+type ResultMessage struct {
+	ID        string        `json:"task_id"`
+	Status    string        `json:"status"`
+	Traceback interface{}   `json:"traceback"`
+	Result    interface{}   `json:"result"`
+	Children  []interface{} `json:"children"`
 }
 
 type TaskMessage struct {
@@ -161,72 +257,4 @@ func (tm *TaskMessage) Encode() ([]byte, error) {
 		return nil, err
 	}
 	return jsonData, err
-}
-
-type CeleryMessage struct {
-	Body            []byte            `json:"body,omitempty"`
-	Headers         *CeleryHeaders    `json:"headers,omitempty"`
-	Properties      *CeleryProperties `json:"properties,omitempty"`
-	QueueName       string            `json:"queue_name,omitempty"`
-	ContentType     string            `json:"content_type,omitempty"`
-	ContentEncoding string            `json:"content_encoding,omitempty"`
-}
-
-var cachedHostname = os.Getenv("HOSTNAME")
-var origin = fmt.Sprintf("%d@%s", os.Getgid(), cachedHostname)
-
-func (cm *CeleryMessage) reset() {
-	cm.ContentEncoding = "utf-8"
-	cm.ContentType = "application/json"
-	cm.Body = nil
-	cm.Headers = &CeleryHeaders{
-		ID:   common.GenerateRequestID(),
-		Lang: "py",
-	}
-	cm.Properties = &CeleryProperties{}
-	cm.Properties.CorrelationId = common.GenerateRequestID()
-	cm.Properties.ReplyTo = common.GenerateRequestID()
-	cm.Properties.ContentEncoding = cm.ContentEncoding
-	cm.Properties.ContentType = cm.ContentType
-	cm.Headers.Origin = origin
-}
-
-var celeryMessagePool = sync.Pool{
-	New: func() interface{} {
-		return &CeleryMessage{
-			Body: nil,
-			Headers: &CeleryHeaders{
-				Lang: "py",
-				ID:   common.GenerateRequestID(),
-			},
-			ContentEncoding: "utf-8",
-			ContentType:     "application/json",
-			Properties: &CeleryProperties{
-				CorrelationId:   common.GenerateRequestID(),
-				ReplyTo:         common.GenerateRequestID(),
-				ContentEncoding: "utf-8",
-				ContentType:     "application/json",
-			},
-		}
-	},
-}
-
-func getCeleryMessage(encodedTaskMessage []byte) *CeleryMessage {
-	msg := celeryMessagePool.Get().(*CeleryMessage)
-	msg.Body = encodedTaskMessage
-	msg.Headers.Argsrepr = string(encodedTaskMessage)
-	return msg
-}
-
-func releaseCeleryMessage(v *CeleryMessage) {
-	v.reset()
-	celeryMessagePool.Put(v)
-}
-
-type ResultMessage struct {
-	ID        string        `json:"task_id"`
-	Status    string        `json:"status"`
-	Traceback interface{}   `json:"traceback"`
-	Result    interface{}   `json:"result"`
-	Children  []interface{} `json:"children"`
 }

@@ -59,6 +59,7 @@ func (cc *CeleryClient) delay(
 		return nil, err
 	}
 	celeryMessage := getCeleryMessage(encodedMessage)
+	defer releaseCeleryMessage(celeryMessage)
 	for _, arg := range args {
 		switch i := arg.(type) {
 		case *CeleryProperties:
@@ -71,7 +72,6 @@ func (cc *CeleryClient) delay(
 	}
 	celeryMessage.Headers.Task = task.Task
 	celeryMessage.QueueName = task.QueryName
-	defer releaseCeleryMessage(celeryMessage)
 	err = cc.Broker.SendCeleryMessage(ctx, celeryMessage)
 	if err != nil {
 		return nil, err

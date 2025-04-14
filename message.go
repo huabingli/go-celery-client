@@ -112,17 +112,19 @@ func (ch *CeleryHeaders) Merge(other *CeleryHeaders) {
 }
 
 type TaskMessage struct {
-	ID      string                 `json:"-"`
-	Task    string                 `json:"-"`
-	Retries int                    `json:"-"`
-	Args    []interface{}          `json:"args,omitempty"`
-	Kwargs  map[string]interface{} `json:"kwargs,omitempty"`
-	Embed   interface{}            `json:"-"`
+	ID        string                 `json:"-"`
+	QueryName string                 `json:"-"`
+	Task      string                 `json:"-"`
+	Retries   int                    `json:"-"`
+	Args      []interface{}          `json:"args,omitempty"`
+	Kwargs    map[string]interface{} `json:"kwargs,omitempty"`
+	Embed     interface{}            `json:"-"`
 }
 
 func (tm *TaskMessage) reset() {
 	tm.ID = common.GenerateRequestID()
 	tm.Task = ""
+	tm.QueryName = ""
 	tm.Args = nil
 	tm.Kwargs = nil
 }
@@ -165,6 +167,7 @@ type CeleryMessage struct {
 	Body            []byte            `json:"body,omitempty"`
 	Headers         *CeleryHeaders    `json:"headers,omitempty"`
 	Properties      *CeleryProperties `json:"properties,omitempty"`
+	QueueName       string            `json:"queue_name,omitempty"`
 	ContentType     string            `json:"content_type,omitempty"`
 	ContentEncoding string            `json:"content_encoding,omitempty"`
 }

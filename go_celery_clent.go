@@ -26,17 +26,25 @@ type AsyncResult struct {
 	result *ResultMessage
 }
 
-func (cc *CeleryClient) Delay(ctx context.Context, taskName string, args ...interface{}) (*AsyncResult, error) {
+func (cc *CeleryClient) Delay(
+	ctx context.Context,
+	taskName, queueName string,
+	args ...interface{},
+) (*AsyncResult, error) {
 	celeryTask := getTaskMessage(taskName)
 	celeryTask.Args = args
+	celeryTask.QueryName = queueName
 	return cc.delay(ctx, celeryTask)
 }
 
-func (cc *CeleryClient) DelayKwargs(ctx context.Context, taskName string, kwargs map[string]interface{}) (
-	*AsyncResult, error,
-) {
+func (cc *CeleryClient) DelayKwargs(
+	ctx context.Context,
+	taskName, queueName string,
+	kwargs map[string]interface{},
+) (*AsyncResult, error) {
 	celeryTask := getTaskMessage(taskName)
 	celeryTask.Kwargs = kwargs
+	celeryTask.QueryName = queueName
 	return cc.delay(ctx, celeryTask)
 }
 
@@ -62,6 +70,7 @@ func (cc *CeleryClient) delay(
 		}
 	}
 	celeryMessage.Headers.Task = task.Task
+	celeryMessage.QueueName = task.QueryName
 	defer releaseCeleryMessage(celeryMessage)
 	err = cc.Broker.SendCeleryMessage(ctx, celeryMessage)
 	if err != nil {

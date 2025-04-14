@@ -27,7 +27,7 @@ func TestAMQPBroker(t *testing.T) {
 		t.Error(err)
 	}
 	defer amqp.Close()
-	err = amqp.AddQueue("stw_models.tasks.analyzing_stw_uc_user_ben_logs", "stw")
+	err = amqp.AddQueue("stw")
 	if err != nil {
 		t.Error(err)
 		return
@@ -38,12 +38,12 @@ func TestAMQPBroker(t *testing.T) {
 	ctx := context.Background()
 	for i := 0; i < 20; i++ {
 		message.UserName = "testuser" + strconv.Itoa(i)
-		_, err := celery.Delay(ctx, "stw_models.tasks.analyzing_stw_uc_user_ben_logs", message)
+		_, err := celery.Delay(ctx, "stw_models.tasks.analyzing_stw_uc_user_ben_logs", "stw", message)
 		if err != nil {
 			t.Error(err)
 		}
 	}
-	_, err = celery.Delay(ctx, "stw_models.tasks.analyzing_stw_uc_user_ben_logs", message)
+	_, err = celery.Delay(ctx, "stw_models.tasks.analyzing_stw_uc_user_ben_logs", "stw", message)
 	if err != nil {
 		t.Error(err)
 	}

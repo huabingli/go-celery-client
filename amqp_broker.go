@@ -35,9 +35,9 @@ func (b *AMQPCeleryBroker) Close() {
 }
 
 // AddQueue 注册一个任务对应的队列及其 Publisher
-func (b *AMQPCeleryBroker) AddQueue(taskName, queueName string) error {
+func (b *AMQPCeleryBroker) AddQueue(queueName string) error {
 	// 如果已经存在，不重复添加
-	if _, ok := b.AMQPQueue.Load(taskName); ok {
+	if _, ok := b.AMQPQueue.Load(queueName); ok {
 		return nil
 	}
 
@@ -48,10 +48,10 @@ func (b *AMQPCeleryBroker) AddQueue(taskName, queueName string) error {
 		rabbitmq.WithPublisherOptionsConfirm,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create publisher for %s: %w", taskName, err)
+		return fmt.Errorf("failed to create publisher for: %w", err)
 	}
 	b.AMQPQueue.Store(
-		taskName, &AMQPQueue{
+		queueName, &AMQPQueue{
 			QueueName: queueName,
 			Publisher: publisher,
 		},
@@ -88,7 +88,7 @@ func NewAMQPCeleryBrokerByConn(conn *rabbitmq.Conn) *AMQPCeleryBroker {
 
 // SendCeleryMessage 发送Celery消息
 func (b *AMQPCeleryBroker) SendCeleryMessage(ctx context.Context, msg *CeleryMessage) error {
-	v, ok := b.AMQPQueue.Load(msg.Headers.Task)
+	v, ok := b.AMQPQueue.Load(msg.QueueName)
 	if !ok {
 		return fmt.Errorf("no queue found for task: %s", msg.Headers.Task)
 	}

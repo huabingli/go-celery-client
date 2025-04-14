@@ -2,162 +2,129 @@ package go_celery_client
 
 import (
 	"context"
+	"fmt"
+	"sync"
 
-	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/wagslane/go-rabbitmq"
 )
 
-// AMQPExchange 表示AMQP交换。
-type AMQPExchange struct {
-	Name       string
-	Type       string
-	Durable    bool
-	AutoDelete bool
-}
-
-func NewAMQPExchange(name string, exchangeType string, durable bool, autoDelete bool) *AMQPExchange {
-	return &AMQPExchange{
-		Name:       name,
-		Type:       exchangeType,
-		Durable:    durable,
-		AutoDelete: autoDelete,
-	}
-}
-
-// AMQPQueue 表示AMQP队列。
+// AMQPQueue 封装了每个 Celery Task 对应的队列及发布器
 type AMQPQueue struct {
-	Name       string
-	Durable    bool
-	AutoDelete bool
+	QueueName string
+	Publisher *rabbitmq.Publisher
 }
 
-func NewAMQPQueue(name string, durable bool, autoDelete bool) *AMQPQueue {
-	return &AMQPQueue{
-		Name:       name,
-		Durable:    durable,
-		AutoDelete: autoDelete,
-	}
-}
-
-// AMQPCeleryBroker 表示AMQP Celery Broker。
+// AMQPCeleryBroker 管理 AMQP 连接和多个任务队列的 Publisher
 type AMQPCeleryBroker struct {
-	*amqp.Channel
-	Connection       *amqp.Connection
-	Exchange         *AMQPExchange
-	Queue            *AMQPQueue
-	consumingChannel <-chan amqp.Delivery
-	Rate             int
+	Connection *rabbitmq.Conn
+	AMQPQueue  sync.Map
 }
 
-func NewAMQPConnection(host string) (*amqp.Connection, *amqp.Channel) {
-	connection, err := amqp.Dial(host)
+// Close 关闭连接与所有发布器
+func (b *AMQPCeleryBroker) Close() {
+	if b.Connection != nil {
+		_ = b.Connection.Close()
+	}
+	b.AMQPQueue.Range(
+		func(_, value any) bool {
+			queue := value.(*AMQPQueue)
+			queue.Publisher.Close()
+			return true
+		},
+	)
+}
+
+// AddQueue 注册一个任务对应的队列及其 Publisher
+func (b *AMQPCeleryBroker) AddQueue(taskName, queueName string) error {
+	// 如果已经存在，不重复添加
+	if _, ok := b.AMQPQueue.Load(taskName); ok {
+		return nil
+	}
+
+	publisher, err := rabbitmq.NewPublisher(
+		b.Connection,
+		rabbitmq.WithPublisherOptionsLogging,
+		rabbitmq.WithPublisherOptionsExchangeName(queueName),
+		rabbitmq.WithPublisherOptionsConfirm,
+	)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("failed to create publisher for %s: %w", taskName, err)
 	}
+	b.AMQPQueue.Store(
+		taskName, &AMQPQueue{
+			QueueName: queueName,
+			Publisher: publisher,
+		},
+	)
+	return nil
+}
 
-	channel, err := connection.Channel()
+// NewAMQPConnection 创建一个新的 AMQP 连接
+func NewAMQPConnection(host string) (*rabbitmq.Conn, error) {
+	return rabbitmq.NewConn(
+		host,
+		rabbitmq.WithConnectionOptionsLogger(NewSlogLogger()),
+		rabbitmq.WithConnectionOptionsLogging,
+	)
+}
+
+// NewAMQPCeleryBroker 创建一个新的 AMQP Celery Broker（带默认参数）
+func NewAMQPCeleryBroker(host string) (*AMQPCeleryBroker, error) {
+
+	conn, err := NewAMQPConnection(host)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("failed to create AMQP connection: %w", err)
 	}
-	return connection, channel
+	return NewAMQPCeleryBrokerByConn(conn), nil
 }
 
-// NewAMQPCeleryBroker creates new AMQPCeleryBroker
-func NewAMQPCeleryBroker(host string, exchangeName, exchangeType, queue string) *AMQPCeleryBroker {
-	if exchangeType == "" {
-		exchangeType = "direct"
-	}
-	if queue == "" {
-		queue = "celery"
-	}
-	if exchangeName == "" {
-		exchangeName = "celery"
-	}
-	conn, channel := NewAMQPConnection(host)
-	return NewAMQPCeleryBrokerByConnAndChannel(exchangeName, exchangeType, queue, conn, channel)
-}
-
-// NewAMQPCeleryBrokerByConnAndChannel creates new AMQPCeleryBroker using AMQP conn and channel
-func NewAMQPCeleryBrokerByConnAndChannel(
-	exchangeName,
-	exchangeType,
-	queue string,
-	conn *amqp.Connection,
-	channel *amqp.Channel,
-) *AMQPCeleryBroker {
+// NewAMQPCeleryBrokerByConn  基于已有连接创建 Broker
+func NewAMQPCeleryBrokerByConn(conn *rabbitmq.Conn) *AMQPCeleryBroker {
 	broker := &AMQPCeleryBroker{
-		Channel:    channel,
 		Connection: conn,
-		Exchange:   NewAMQPExchange(exchangeName, exchangeType, true, false),
-		Queue:      NewAMQPQueue(queue, true, false),
-		Rate:       4,
-	}
-	if err := broker.CreateExchange(); err != nil {
-		panic(err)
-	}
-	if err := broker.CreateQueue(); err != nil {
-		panic(err)
-	}
-	if err := broker.Qos(broker.Rate, 0, false); err != nil {
-		panic(err)
-	}
-	if err := broker.StartConsumingChannel(); err != nil {
-		panic(err)
 	}
 	return broker
 }
 
-// StartConsumingChannel 在AMQP队列上生成接收通道
-func (b *AMQPCeleryBroker) StartConsumingChannel() error {
-	channel, err := b.Consume(b.Queue.Name, "", false, false, false, false, nil)
-	if err != nil {
-		return err
-	}
-	b.consumingChannel = channel
-	return nil
-}
-
-// CreateExchange 使用存储配置声明AMQP交换
-func (b *AMQPCeleryBroker) CreateExchange() error {
-	return b.ExchangeDeclare(
-		b.Exchange.Name,
-		b.Exchange.Type,
-		b.Exchange.Durable,
-		b.Exchange.AutoDelete,
-		false,
-		false,
-		nil,
-	)
-}
-
-// CreateQueue 使用存储配置声明AMQP队列
-func (b *AMQPCeleryBroker) CreateQueue() error {
-	_, err := b.QueueDeclare(
-		b.Queue.Name,
-		b.Queue.Durable,
-		b.Queue.AutoDelete,
-		false,
-		false,
-		nil,
-	)
-	return err
-}
-
+// SendCeleryMessage 发送Celery消息
 func (b *AMQPCeleryBroker) SendCeleryMessage(ctx context.Context, msg *CeleryMessage) error {
-	headers := amqp.Table{
+	v, ok := b.AMQPQueue.Load(msg.Headers.Task)
+	if !ok {
+		return fmt.Errorf("no queue found for task: %s", msg.Headers.Task)
+	}
+	queue := v.(*AMQPQueue)
+
+	headers := rabbitmq.Table{
 		"lang":     msg.Headers.Lang,
 		"task":     msg.Headers.Task,
 		"id":       msg.Headers.ID,
 		"argsrepr": msg.Headers.Argsrepr,
 		"origin":   msg.Headers.Origin,
 	}
-	props := amqp.Publishing{
-		Headers:         headers,
-		ContentType:     msg.Properties.ContentType,
-		ContentEncoding: msg.Properties.ContentEncoding,
-		ReplyTo:         msg.Properties.ReplyTo,
-		Body:            msg.Body,
+
+	confirms, err := queue.Publisher.PublishWithDeferredConfirmWithContext(
+		ctx,
+		msg.Body,
+		[]string{queue.QueueName},
+		rabbitmq.WithPublishOptionsContentType(msg.Properties.ContentType),
+		rabbitmq.WithPublishOptionsContentEncoding(msg.Properties.ContentEncoding),
+		rabbitmq.WithPublishOptionsMandatory,
+		rabbitmq.WithPublishOptionsPersistentDelivery,
+		rabbitmq.WithPublishOptionsExchange(queue.QueueName),
+		rabbitmq.WithPublishOptionsReplyTo(msg.Properties.ReplyTo),
+		rabbitmq.WithPublishOptionsHeaders(headers),
+	)
+	if err != nil {
+		return fmt.Errorf("publish error: %w", err)
 	}
-	return b.PublishWithContext(ctx, "", b.Queue.Name, false, false, props)
+	ok, err = confirms[0].WaitContext(context.Background())
+	if err != nil {
+		return fmt.Errorf("confirm wait error: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("message not acknowledged by broker")
+	}
+	return nil
 }
 func (b *AMQPCeleryBroker) GetTaskMessage(_ context.Context) (*TaskMessage, error) {
 	return nil, nil

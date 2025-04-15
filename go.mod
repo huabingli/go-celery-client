@@ -3,7 +3,7 @@ module github.com/huabingli/go-celery-client
 go 1.24
 
 require (
-	github.com/huabingli/go-common v0.0.6
+	github.com/huabingli/go-common v0.1.0
 	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/wagslane/go-rabbitmq v0.15.0
 )

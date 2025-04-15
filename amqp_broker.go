@@ -102,7 +102,7 @@ func (b *AMQPCeleryBroker) SendCeleryMessage(ctx context.Context, msg *CeleryMes
 		"origin":   msg.Headers.Origin,
 	}
 
-	confirms, err := queue.Publisher.PublishWithDeferredConfirmWithContext(
+	err := queue.Publisher.PublishWithContext(
 		ctx,
 		msg.Body,
 		[]string{queue.QueueName},
@@ -116,13 +116,6 @@ func (b *AMQPCeleryBroker) SendCeleryMessage(ctx context.Context, msg *CeleryMes
 	)
 	if err != nil {
 		return fmt.Errorf("publish error: %w", err)
-	}
-	ok, err = confirms[0].WaitContext(ctx)
-	if err != nil {
-		return fmt.Errorf("confirm wait error: %w", err)
-	}
-	if !ok {
-		return fmt.Errorf("message not acknowledged by broker")
 	}
 	return nil
 }

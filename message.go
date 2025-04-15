@@ -35,24 +35,13 @@ func (cp *CeleryProperties) Merge(other *CeleryProperties) {
 	}
 }
 
-var propertiesPool = sync.Pool{
-	New: func() interface{} {
-		return &CeleryProperties{}
-	},
-}
-
-func getProperties() *CeleryProperties {
-	p := propertiesPool.Get().(*CeleryProperties)
-	p.CorrelationId = common.GenerateRequestID()
-	p.ReplyTo = common.GenerateRequestID()
-	p.ContentEncoding = "utf-8"
-	p.ContentType = "application/json"
-	return p
-}
-
-func releaseProperties(p *CeleryProperties) {
-	*p = CeleryProperties{}
-	propertiesPool.Put(p)
+func (cp *CeleryProperties) Reset() {
+	*cp = CeleryProperties{
+		ContentType:     "application/json",
+		ContentEncoding: "utf-8",
+		CorrelationId:   common.GenerateRequestID(),
+		ReplyTo:         common.GenerateRequestID(),
+	}
 }
 
 type CeleryHeaders struct {
@@ -132,50 +121,30 @@ func (ch *CeleryHeaders) Merge(other *CeleryHeaders) {
 var cachedHostname = os.Getenv("HOSTNAME")
 var origin = fmt.Sprintf("%d@%s", os.Getgid(), cachedHostname)
 
-var headersPool = sync.Pool{
-	New: func() interface{} {
-		return &CeleryHeaders{}
-	},
-}
-
-func getHeaders() *CeleryHeaders {
-	h := headersPool.Get().(*CeleryHeaders)
-	h.Lang = "py"
-	h.ID = common.GenerateRequestID()
-	h.Origin = origin
-	return h
-}
-
-func releaseHeaders(h *CeleryHeaders) {
-	*h = CeleryHeaders{}
-	headersPool.Put(h)
+func (ch *CeleryHeaders) Reset() {
+	*ch = CeleryHeaders{
+		Lang:   "py",
+		ID:     common.GenerateRequestID(),
+		Origin: origin,
+	}
 }
 
 type CeleryMessage struct {
-	Body            []byte            `json:"body,omitempty"`
-	Headers         *CeleryHeaders    `json:"headers,omitempty"`
-	Properties      *CeleryProperties `json:"properties,omitempty"`
-	QueueName       string            `json:"queue_name,omitempty"`
-	ContentType     string            `json:"content_type,omitempty"`
-	ContentEncoding string            `json:"content_encoding,omitempty"`
+	Body            []byte           `json:"body,omitempty"`
+	Headers         CeleryHeaders    `json:"headers,omitempty"`
+	Properties      CeleryProperties `json:"properties,omitempty"`
+	QueueName       string           `json:"queue_name,omitempty"`
+	ContentType     string           `json:"content_type,omitempty"`
+	ContentEncoding string           `json:"content_encoding,omitempty"`
 }
 
 func (cm *CeleryMessage) reset() {
 	cm.ContentEncoding = "utf-8"
 	cm.ContentType = "application/json"
 	cm.Body = nil
-
-	// 先释放旧的
-	if cm.Headers != nil {
-		releaseHeaders(cm.Headers)
-	}
-
-	if cm.Properties != nil {
-		releaseProperties(cm.Properties)
-	}
-
-	cm.Headers = getHeaders()
-	cm.Properties = getProperties()
+	cm.QueueName = ""
+	cm.Headers.Reset()
+	cm.Properties.Reset()
 
 }
 
